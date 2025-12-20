@@ -1,154 +1,273 @@
 
-#By Venus 7.13
+# renamed from Get_StartEndTime.py to get_edf_timing_info
+"""
+EEG Recording Timing Analyzer
+Author: Venus
+Date: 2024-07-13
+Last Updated: 2025-12-18
 
-# This script processes EDF (European Data Format) files by reading their headers to extract timing information.
-# The directory structure is organized as follows:
-# - A main folder contains subfolders for each site.
-# - Each site folder contains subfolders for each patient.
-# - Each patient folder includes a "diagnosis" folder and a "follow up" folder, both containing EDF files.
+Description:
+This script processes EDF (European Data Format) files by reading their headers to
+extract timing information including start time, duration, and end time. It flags
+recordings shorter than 2 minutes for quality control.
 
-# The script reads the EDF headers to obtain the start time, end time, and duration of each EDF file.
-# It flags files with a duration shorter than 2 minutes.
+Multiple center directory structure:
+    root_folder/
+    ├── center1/
+    │   ├── patient1/
+    │   │   ├── diagnosis/
+    │   │   │   └── *.edf
+    │   │   └── follow up/
+    │   │       └── *.edf
+    │   └── patient2/
+    │       ├── diagnosis/
+    │       └── follow up/
+    └── site2/
+        └── ...
 
-# Prerequisites:
-# - An Excel file named "FU_DX_timings.xlsx" must exist in the root directory.
-# - The script saves the extracted information for each site in a separate sheet within this Excel file.
-# - Each sheet is named after the corresponding site, and the EDF information is organized by EDF file name.
+Output:
+    FU_DX_timings.xlsx: Excel file with one sheet per site containing timing
+                        information for all EDF files
 
-# Folder Structure:
-# testing_root/
-# ├── site1/
-# │   ├── patient1/
-# │   │   ├── diagnosis/
-# │   │   └── follow up/
-# │   └── patient2/
-# │       ├── diagnosis/
-# │       └── follow up/
-# └── site2/
-#     ├── patient1/
-#     │   ├── diagnosis/
-#     │   └── follow up/
+Usage:
+    # Process single center
+    process_single_center_timing(center_dir="path/to/center/")
+
+    # Process all centers
+    process_all_centers_timing(root_folder="path/to/root/")
+
+Requirements:
+    pip install pyedflib pandas openpyxl
+"""
+
+
 import pyedflib
 import pandas as pd
-import numpy as np
 import os
-import glob
-from datetime import datetime, timedelta
-# import Chann_Fs_find
 
-def   Find_duration_end_start(path_edf):
+from datetime import timedelta
+
+def   extract_edf_timing_info(folder_path, min_duration_seconds=120):
     """
-        Reads EDF headers and collects timing information.
+        Extract timing information from all EDF files in a folder.
 
-        Parameters:
-            path_edf (str): Path to the EDF files.
+        Reads EDF headers to collect start time, end time, and duration.
+        Flags files shorter than the specified minimum duration.
+
+        Args:
+            folder_path (str): Path to folder containing EDF files
+            min_duration_seconds (int): Minimum acceptable duration in seconds (default: 120)
 
         Returns:
-            pd.DataFrame: DataFrame containing timing information of EDF files.
+            pd.DataFrame: DataFrame with columns:
+                - 'EDF_Filename': Name of the EDF file
+                - 'Start_DateTime': Recording start datetime
+                - 'End_DateTime': Recording end datetime
+                - 'Duration_Seconds': Recording duration in seconds
+                - 'Short_Duration_Flag': 1 if duration < min_duration_seconds, else 0
+            Returns empty DataFrame if folder doesn't exist or contains no EDF files
         """
-    
-    timing_info_edf = []
-    edf_names = os.listdir(path_edf)
-    if not (path_edf):
-        return timing_info_edf 
+    if not os.path.exists(folder_path):
+        print(f"Warning: Folder not found - {folder_path}")
+        return pd.DataFrame()
 
-    for k, edf_name in enumerate(edf_names):
-        full_path_edf = path_edf + edf_name
-        my_edf = pyedflib.EdfReader(full_path_edf)
-        start_edf = my_edf.getStartdatetime()
-        duration_seconds = my_edf.getFileDuration()
-        duration = timedelta(seconds=duration_seconds)
-        end_edf = start_edf + duration
-        my_edf.close()
+    # Get all EDF files
+    try:
+        edf_files = [file for file in os.listdir(folder_path) if file.lower().endswith('.edf')]
+    except Exception as e:
+        print(f"Error listing directory {folder_path}: {str(e)}")
+        return pd.DataFrame()
 
-        # Overlap = any(element == 1 for element in overlap_list)
-        flag = 1 if duration_seconds < 120 else 0
-        timing_info_edf .append({"PatientID": edf_name,
-                                 "Start DateTime": start_edf,
-                                 "Finish DateTime": end_edf,
-                                 "Duration in seconds": duration_seconds,
-                                  # "Overlap": Overlap,
-                                 "Duration < 120 s": flag})
-        # writing into df
-    timing_info_edf = pd.DataFrame(timing_info_edf)
-    return timing_info_edf 
+    if not edf_files:
+        print(f"Warning: No EDF files found in {folder_path}")
+        return pd.DataFrame()
 
-# To Do:
-# write a fucntion that takes two efs and returns their interval differences in days, hours, and mitunes all ogether
+    timing_data = []
 
-# also, write another fucntion that checks if the edf within one folder has changed the name, and if so,
-# check the interval and the lenght of edf and see if they match
-# def do_ranges_overlap( start1,end1, start2,end2):
-#
-#     #if end1 <= end2 and start2 >=end1:
-#     if start1 <= start2 and start2 <= end1:
-#         overlap =1
-#         # save edf name and add a counter when you call this function
-#     else:
-#         overlap = 0
-#
-#     return  overlap
+    for edf_filename in edf_files:
+        try:
+            full_path = os.path.join(folder_path, edf_filename)
 
-def write_as_excel(data_frame, folder_dir, excel_file_name, sheet_name, mode='a'):
+            # Read edf timing information
 
+            with pyedflib.EdfReader(full_path) as edf_reader:
+                start_datetime = edf_reader.getStartdatetime()
+                duration_seconds = edf_reader.getFileDuration()
+
+            # Calculate end time
+            duration = timedelta(seconds=duration_seconds)
+            end_datetime = start_datetime + duration
+
+            flag = 1 if duration_seconds < min_duration_seconds else 0
+            timing_data.append({"PatientID": edf_filename,
+                                     "Start DateTime": start_datetime,
+                                     "Finish DateTime": end_datetime,
+                                     "Duration in seconds": duration_seconds,
+                                     "Duration < 120 s": flag})
+        except Exception as e:
+            print(f"Error reading {edf_filename}: {str(e)}")
+            continue
+    if not timing_data:
+        print(f"Warning: No valid EDF timing data collected from {folder_path}")
+        return pd.DataFrame()
+    # writing into df
+    timing_data_df = pd.DataFrame(timing_data)
+    return timing_data_df
+
+
+def write_dataframe_to_excel(data_frame, folder_dir, excel_filename, sheet_name, mode='a'):
     """
-    Writes a DataFrame to an Excel file.
+    Write a DataFrame to an Excel file as a new sheet.
 
-    Parameters:
-        data_frame (pd.DataFrame): The DataFrame to write.
-        folder_dir (str): The directory to save the Excel file.
-        excel_file_name (str): The name of the Excel file.
-        sheet_name (str): The name of the sheet in the Excel file.
-    """
-
-    with pd.ExcelWriter(f"{folder_dir}/{excel_file_name}", mode=mode, engine='openpyxl') as writer:
-        data_frame.to_excel(writer, sheet_name=sheet_name, index=False)
-
-
-
-def Process_all_data (root_folder="Z:/uci_vmostaghimi/testing-root", diagnosis_folder_name = "diagnosis", follow_up_folder_name = "follow up"):
-    """
-    Processes all EDF files in the specified directory structure and writes timing information to an Excel file.
-
-    Parameters:
-        root_folder (str): The root directory containing site folders.
-        diagnosis_folder_name (str): The name of the diagnosis folder.
-        follow_up_folder_name (str): The name of the follow-up folder.
+    Args:
+        data_frame (pd.DataFrame): Data to write
+        folder_dir (str): Directory where Excel file should be saved
+        excel_filename (str): Name of the Excel file
+        sheet_name (str): Name of the sheet to create
+        mode (str): Write mode - 'a' for append (default), 'w' for overwrite
     """
 
-    timing_one = pd.DataFrame(columns=["patientID", "Start DateTime", "Finish DateTime","Duration in seconds","Short Duration"])
-
-    site_directories = [f.path for f in os.scandir(root_folder) if f.is_dir()]
-
-    # for i, site_directory in enumerate(site_directories):
-    for i, site_directory in enumerate(site_directories):
-        timing_all = pd.DataFrame(
-            columns=["PatientID", "Start DateTime", "Finish DateTime", "Duration in seconds","Duration < 120 s"])
-
-        timing_one = pd.DataFrame(
-            columns=["PatientID", "Start DateTime", "Finish DateTime", "Duration in seconds","Duration < 120 s"])
-
-        print(site_directories[i])
-        site_names = os.listdir(root_folder) ###probably need to remove the excel files
-
-        #TO DO
-        #make the excluding excels another function
-        patientIDs = []
-        # checks that the listed contain of the desired path does not have a .xlsx file
-        for f in os.listdir(site_directories[i] + '/'):
-            if not (f.endswith('.xlsx')):
-                patientIDs.append(f)
-
-        for j, patientID in enumerate(patientIDs):
-            path_dx = f'{site_directories[i]}/{patientID}/{diagnosis_folder_name}/'
-            path_fu = f'{site_directories[i]}/{patientID}/{follow_up_folder_name}/'
-            timing_info_DX = Find_duration_end_start(path_dx)
-            timing_info_FU = Find_duration_end_start(path_fu)
-            timing_one = pd.concat([timing_info_DX, timing_info_FU], axis=0)
-            timing_all = pd.concat([timing_one, timing_all], axis=0)
-
-        write_as_excel(timing_all, root_folder, 'FU_DX_timings.xlsx', site_names[i], mode='a')
+    if data_frame.empty:
+        print(f"Warning: Empty DataFrame, skipping write for sheet '{sheet_name}'")
+        return
+    excel_path = os.path.join(folder_dir, excel_filename)
+    try:
+        with pd.ExcelWriter(excel_path, mode=mode, engine='openpyxl') as writer:
+            data_frame.to_excel(writer, sheet_name=sheet_name, na_rep='', index=False )
+    except Exception as e:
+        print(f"Error writing to Excel file {excel_filename}, sheet {sheet_name}: {str(e)}")
 
 
-Process_all_data()
+def process_single_center_timing(center_dir, diagnosis_folder_name="diagnosis",
+                                 follow_up_folder_name="follow up",
+                                 min_duration_seconds=120):
+    """
+    Process all EDF files in a single center and extract timing information.
+
+    Args:
+        center_dir (str): Path to the center directory
+        diagnosis_folder_name (str): Name of diagnosis subfolder (default: "diagnosis")
+        follow_up_folder_name (str): Name of follow-up subfolder (default: "follow up")
+        min_duration_seconds (int): Minimum duration threshold in seconds (default: 120)
+
+    Returns:
+        pd.DataFrame: Combined timing information for all patients in the center
+    """
+    if not os.path.exists(center_dir):
+        raise FileNotFoundError(f"Center directory not found: {center_dir}")
+
+    center_name = os.path.basename(center_dir)
+    print(f"\nProcessing Center: {center_name}")
+
+    # Get all patient IDs (subdirectories only)
+    patient_ids = [d for d in os.listdir(center_dir)
+                   if os.path.isdir(os.path.join(center_dir, d))]
+
+    print(f"Found {len(patient_ids)} patients")
+    all_timing = []
+    for patient_id in patient_ids:
+        print(f"Processing Patient: {patient_id}")
+        dx_path = os.path.join(center_dir, patient_id, diagnosis_folder_name)
+        timing_dx = extract_edf_timing_info(dx_path, min_duration_seconds)
+
+        fu_path = os.path.join(center_dir, patient_id, follow_up_folder_name)
+        timing_fu = extract_edf_timing_info(fu_path, min_duration_seconds)
+
+        timing_one = pd.concat([timing_dx, timing_fu], axis=0)
+        all_timing.append(timing_one)
+    if all_timing:
+        combined_timing = pd.concat(all_timing, ignore_index=True)
+        return combined_timing
+    else:
+        return pd.DataFrame()
+
+
+
+def process_all_centers_timing(root_folder, diagnosis_folder_name="diagnosis",
+                               follow_up_folder_name="follow up",
+                               excel_filename="FU_DX_timings.xlsx",
+                               min_duration_seconds=120):
+    """
+    Process all centers and extract timing information from all EDF files.
+
+    Args:
+        root_folder (str): Path to root directory containing center folders
+        diagnosis_folder_name (str): Name of diagnosis subfolder (default: "diagnosis")
+        follow_up_folder_name (str): Name of follow-up subfolder (default: "follow up")
+        min_duration_seconds (int): Minimum duration threshold in seconds (default: 120)
+
+    Output Files (saved in root_folder):
+        FU_DX_timings.xlsx: One sheet per center with timing information
+    """
+
+    if not os.path.exists(root_folder):
+        raise FileNotFoundError(f"Root folder not found: {root_folder}")
+
+    # Get all center directories
+    center_directories = [f.path for f in os.scandir(root_folder) if f.is_dir()]
+    center_names = [os.path.basename(center_dir) for center_dir in center_directories]
+
+    print(f"\n{'=' * 60}")
+    print(f"Found {len(center_names)} centers to process")
+    print(f"{'=' * 60}\n")
+
+    # Process each center
+    for center_idx, center_directory in enumerate(center_directories):
+        center_name = center_names[center_idx]
+        print(f"Processing Center {center_idx + 1}/{len(center_directories)}: {center_name}")
+
+        center_timing = process_single_center_timing(
+            center_directory,
+            diagnosis_folder_name=diagnosis_folder_name,
+            follow_up_folder_name=follow_up_folder_name,
+            min_duration_seconds=min_duration_seconds
+        )
+
+        # Save to Excel (one sheet per center)
+        write_dataframe_to_excel(
+            center_timing,
+            root_folder,
+            excel_filename,
+            center_name,
+            mode='a'
+        )
+
+
+
+if __name__ == '__main__':
+
+    # CONFIGURATION
+    DIAGNOSIS_FOLDER = "diagnosis"
+    FOLLOWUP_FOLDER = "follow up"
+    EXCEL_FILENAME = "FU_DX_timings.xlsx"
+    MIN_DURATION_SECONDS = 120  # Flag files shorter than 2 minutes
+
+
+    # ------ Option 1: Process ALL Centers ------
+    # Uncomment to process multiple centers:
+    # process_all_centers_timing(
+    #     root_folder="Z:/uci_vmostaghimi/testing-root/",
+    #     diagnosis_folder_name=DIAGNOSIS_FOLDER,
+    #     follow_up_folder_name=FOLLOWUP_FOLDER,
+    #     excel_filename=EXCEL_FILENAME,
+    #     min_duration_seconds=MIN_DURATION_SECONDS
+    # )
+
+    # ------ Option 2: Process SINGLE Center ------
+    timing_info_df = process_single_center_timing(
+        center_dir= 'Z:/uci_vmostaghimi/23.uconn_jmadan_new',
+        diagnosis_folder_name=DIAGNOSIS_FOLDER,
+        follow_up_folder_name=FOLLOWUP_FOLDER,
+        min_duration_seconds=MIN_DURATION_SECONDS
+    )
+
+    write_dataframe_to_excel(
+        timing_info_df,
+        folder_dir='Z:/uci_vmostaghimi/23.uconn_jmadan_new',
+        excel_filename=EXCEL_FILENAME,
+        sheet_name="23.uconn_jmadan",
+        mode='w')
+
+
+
 
