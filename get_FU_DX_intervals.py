@@ -17,6 +17,15 @@ For each patient:
 - Calculates the interval in days
 - Validates that all EDF files in each folder have the same start datetime
 
+Folder Structure:
+    testing_root/
+    ├── site1/
+    │   ├── patient1/
+    │   │   ├── diagnosis/
+    │   │   └── follow up/
+    └── site2/
+        └── ...
+
 Output:
     FU_DX_intervals.xlsx: Excel file with one sheet per center containing
                           patient IDs and their DX-FU intervals in days
@@ -185,8 +194,10 @@ def calculate_intervals_single_center(center_dir, diagnosis_folder_name = "diagn
     intervals_df = pd.DataFrame(intervals_data)
     return intervals_df
 
-def calculate_intervals_multiple_centers(root_folder, diagnosis_folder_name="diagnosis",
-                                          follow_up_folder_name="follow up"):
+def calculate_intervals_multiple_centers(root_folder,
+                                         diagnosis_folder_name="diagnosis",
+                                         follow_up_folder_name="follow up",
+                                         excel_filename="FU_DX_intervals_new.xlsx"):
     """
     Calculate DX-FU intervals for all centers in root folder.
 
@@ -213,14 +224,14 @@ def calculate_intervals_multiple_centers(root_folder, diagnosis_folder_name="dia
 
         center_name = center_names[center_idx]
         print(f"Processing Center {center_idx + 1}/{len(center_directories)}: {center_name}")
-        center_intervals = calculate_intervals_single_center(center_directory, diagnosis_folder_name="diagnosis",
-                                          follow_up_folder_name="follow up")
+        center_intervals = calculate_intervals_single_center(center_directory, diagnosis_folder_name=diagnosis_folder_name,
+                                          follow_up_folder_name=follow_up_folder_name)
 
         # Save to Excel (one sheet per center)
         write_dataframe_to_excel(
             center_intervals,
             root_folder,
-            'FU_DX_intervals.xlsx',
+            excel_filename,
             center_name,
             mode='a'
         )
@@ -231,29 +242,31 @@ if __name__ == "__main__":
     # CONFIGURATION
     DIAGNOSIS_FOLDER = "diagnosis"
     FOLLOWUP_FOLDER = "follow up"
+    EXCEL_FILENAME = "FU_DX_intervals_new.xlsx"
 
     # ------ Option 1: Process ALL Centers ------
     # Uncomment to process multiple centers:
-    # ROOT_FOLDER = "Z:/uci_vmostaghimi/testing-root/"
-    # calculate_intervals_multiple_centers(
-    #     root_folder=ROOT_FOLDER,
-    #     diagnosis_folder_name=DIAGNOSIS_FOLDER,
-    #     follow_up_folder_name=FOLLOWUP_FOLDER
-    # )
+    ROOT_FOLDER = "Z:/uci_vmostaghimi/testing-root/"
+    calculate_intervals_multiple_centers(
+        root_folder=ROOT_FOLDER,
+        diagnosis_folder_name=DIAGNOSIS_FOLDER,
+        follow_up_folder_name=FOLLOWUP_FOLDER,
+        excel_filename=EXCEL_FILENAME
+    )
 
     # ------ Option 2: Process SINGLE Center ------
 
-    result_df = calculate_intervals_single_center(
-        center_dir="Z:/uci_vmostaghimi/23.uconn_jmadan_new",
-        diagnosis_folder_name=DIAGNOSIS_FOLDER,
-        follow_up_folder_name=FOLLOWUP_FOLDER
-    )
-
-    # Save single center results
-    write_dataframe_to_excel(
-        result_df,
-        "Z:/uci_vmostaghimi/23.uconn_jmadan_new",
-        "FU_DX_intervals.xlsx",
-        "23.uconn_jmadan",
-        mode='w'
-    )
+    # result_df = calculate_intervals_single_center(
+    #     center_dir="Z:/uci_vmostaghimi/23.uconn_jmadan_new",
+    #     diagnosis_folder_name=DIAGNOSIS_FOLDER,
+    #     follow_up_folder_name=FOLLOWUP_FOLDER
+    # )
+    #
+    # # Save single center results
+    # write_dataframe_to_excel(
+    #     result_df,
+    #     "Z:/uci_vmostaghimi/23.uconn_jmadan_new",
+    #     EXCEL_FILENAME,
+    #     "23.uconn_jmadan",
+    #     mode='w'
+    # )
