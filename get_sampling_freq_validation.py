@@ -30,8 +30,10 @@ Output:
     FS_matching_DX.xlsx: Diagnosis sampling frequency validation (one sheet per site)
     FS_matching_FU.xlsx: Follow-up sampling frequency validation (one sheet per site)
 
-Requirements:
-    pip install pyedflib pandas openpyxl
+Note:
+    If you want to run process_all_centers_fs_validation, make sure you make two empty
+    Excel spreadsheets with the exact same name as you input to the function, in the
+    directory you want to save the Excel spreadsheet (in this scrip the root_folder)
 """
 
 import pyedflib
