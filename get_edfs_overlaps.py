@@ -26,8 +26,10 @@ Folder Structure:
 Output:
     overlaps.xlsx: Excel file with one sheet per site, listing pairs of overlapping EDFs
 
-Requirements:
-    pip install pyedflib pandas openpyxl
+Note:
+    If you want to run process_all_centers_overlaps, make sure you make an empty
+    Excel spreadsheet with the exact same name as you input to the function, in the
+    directory you want to save the Excel spreadsheet (in this scrip the root_folder)
 """
 import pyedflib
 import pandas as pd
