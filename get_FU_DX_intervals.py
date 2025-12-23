@@ -37,8 +37,10 @@ Usage:
     # Process all centers
     calculate_intervals_multiple_centers(root_folder="path/to/root/")
 
-Requirements:
-    pip install pyedflib pandas openpyxl
+Note:
+    If you want to run calculate_intervals_multiple_centers, make sure you make an empty
+    Excel spreadsheet with the exact same name as you input to the function, in the
+    directory you want to save the Excel spreadsheet (in this scrip the root_folder)
 """
 
 import os
