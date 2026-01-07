@@ -188,11 +188,9 @@ def process_single_center_fs_validation(center_dir, diagnosis_folder_name="diagn
         fu_validation = validate_sampling_frequencies(fu_path)
 
         if not dx_validation.empty:
-            dx_validation.insert(0, 'PatientID', patient_id)
             all_dx_validation.append(dx_validation)
 
         if not fu_validation.empty:
-            fu_validation.insert(0, 'PatientID', patient_id)
             all_fu_validation.append(fu_validation)
 
     # Combine all patients' data
