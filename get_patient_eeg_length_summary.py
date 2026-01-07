@@ -60,7 +60,7 @@ def validate_patient_durations(root_folder='Z:/uci_vmostaghimi/testing-root/addi
 
     # Sheet names to skip (template/placeholder sheets)
     skip_sheet_names = ['sheet1', 'sheet', 'template', 'readme', 'instructions']
-    patient_id_prefix_length = 10  # Number of characters for patient identifier
+    patient_id_prefix_length = 13  # Number of characters for patient identifier
 
     excel_file_path = os.path.join(root_folder, input_excel_filename)
     if not os.path.exists(excel_file_path):
