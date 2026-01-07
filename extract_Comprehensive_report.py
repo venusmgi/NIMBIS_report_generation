@@ -1,173 +1,327 @@
-# By Venus
-# 2.20.2024
+
+"""
+EEG Comprehensive Report Generator
+Author: Venus
+Date: 2024-02-20
+Last Updated: 2025-01-06
+
+Description:
+This script consolidates multiple EEG quality check reports into a single comprehensive report.
+It reads various validation sheets (duration, sampling frequency, channel labels, intervals)
+and merges them into one summary Excel file.
+
+Input Excel Sheets Expected:
+    - 'EDF Duration': Duration validation results
+    - 'FU-DX interval': Follow-up to Diagnosis time intervals
+    - 'fs-matching DX': Diagnosis sampling frequency validation
+    - 'fs-matching FU': Follow-up sampling frequency validation
+    - 'Channel Labels': Channel configuration validation
+
+Output:
+    comprehensive_report.xlsx: Single sheet with merged validation results
+
+Note:
+   to Run this code first make an excel file and put it in the root folder directory
+    and put the name in output_excel_filename
+"""
+
+
+
+import os
 import pandas as pd
+from typing import Dict, List
 
 
-# to Run this code fisrt make an excel file and put it in the root folder direcoty and put the name in Output_excel_sheetName
-def Process_all_data(root_folder='D:/Users/vmostaghimi_choc/Desktop/site reports/10.CHOC',
-                     Input_excel_sheetName='10.CHOC_overall_report_input.xlsx',
-                     Output_excel_sheetName='Overal_report.xlsx'):
-    excel_file_path = f'{root_folder}/{Input_excel_sheetName}'
-    excel_data = pd.read_excel(excel_file_path,
-                               sheet_name=None)  # it reads it as a Dictionary which sheetnames are keys
-    comprehensive_report = pd.DataFrame(
-        columns=['PatientID_DX', 'montage_DX', 'Duration_DX', 'Having_21_channs_DX', 'missing_channs_DX', 'fs_DX_OK',
-                 'PatientID_FU', 'montage_FU', 'Duration_FU', 'Having_21_channs_FU', 'missing_channs_FU', 'fs_FU_OK'])
+# Constants
+PATIENT_ID_PREFIX_LENGTH = 13  # First 13 characters identify the patient
+MIN_SAMPLING_FREQUENCY_HZ = 200
+MAX_SAMPLING_FREQUENCY_ERROR_PERCENT = 1.0
 
-    channel_name_list = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4', 'O1', 'O2', 'F7', 'F8', 'T3', 'T4', 'T5',
-                         'T6', 'Fz', 'Cz', 'Pz', 'A1', 'A2']
+# Standard EEG channel names (10-20 system + reference)
+ESSENTIAL_CHANNEL_NAMES = [
+    'Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4', 'O1', 'O2',
+    'F7', 'F8', 'T3', 'T4', 'T5', 'T6', 'Fz', 'Cz', 'Pz', 'A1', 'A2'
+]
 
-    montage_check_chann_list = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4', 'O1', 'O2', 'F7', 'F8', 'T3', 'T4',
-                                'T5','T6', 'Fz', 'Cz', 'Pz']
+# Channels required for valid montage (excludes reference electrodes)
+MONTAGE_REQUIRED_CHANNELS = [
+    'Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4', 'O1', 'O2',
+    'F7', 'F8', 'T3', 'T4', 'T5', 'T6', 'Fz', 'Cz', 'Pz'
+]
 
-    missing_channel_marker = ['***']
+# Marker for missing channels in reports
+MISSING_CHANNEL_MARKER = '***'
 
-    for sheet_name in excel_data.keys():  # sheet is the dictationary key
 
-        if sheet_name == 'EDF Duration':  # duration in per edf
-            Total_duration_sheet_info = excel_data[sheet_name]
-            Total_duration_sheet_info['PatientID_prefix'] = Total_duration_sheet_info['PatientID'].astype(str).str[
-                                                            :13]  # astype converts the patientIDs to strings and then .str allows to perform vectorwise operation on the patientID
-            Total_duration_sheet_info['Duration_check'] = (Total_duration_sheet_info['duration_max_above_120']) * 1
-            abst = (Total_duration_sheet_info['duration_max_above_120']) * 1
-            # Group by the new column and find the maximum duration within each group
-            # PatientsID_duration_check = site_info.groupby('PatientID_prefix')['Duration in seconds'].max().reset_index()# Here we cannot name the column the way we want becase we are resetting the ordere
-            Patient_Duration_check = Total_duration_sheet_info.groupby('PatientID_prefix')['Duration_check'].agg(
-                'min').reset_index()
-            # PatientsID_duration_check['PatientID'] = test['PatientID_prefix']
-            # PatientsID_duration_check['Sum_Duration'] = test['Duration_check']
+def extract_patient_id_prefix(patient_id_series: pd.Series) -> pd.Series:
+    """
+    Extract patient ID prefix (first N characters) for grouping.
+
+    Args:
+        patient_id_series: Series containing patient IDs
+
+    Returns:
+        Series with patient ID prefixes
+    """
+    return patient_id_series.astype(str).str[:PATIENT_ID_PREFIX_LENGTH]
+
+def validate_sampling_frequency_data(fs_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Validate sampling frequency data and add validation flag.
+
+    Args:
+        fs_df: DataFrame with columns 'Header_Fs' and 'Calculated_Fs'
+
+    Returns:
+        DataFrame with added 'FS_check' column (1 = pass, 0 = fail)
+    """
+    fs_check_list = []
+
+    for idx, _ in fs_df.iterrows():
+        header_fs = fs_df.loc[idx, 'Header_Fs']
+        calculated_fs = fs_df.loc[idx, 'Calculated_Fs']
+
+        # Calculate percentage error
+        if header_fs != 0:
+            error_percent = abs((calculated_fs - header_fs) / header_fs * 100)
+            is_valid = (error_percent <= MAX_SAMPLING_FREQUENCY_ERROR_PERCENT and
+                        header_fs >= MIN_SAMPLING_FREQUENCY_HZ)
+            fs_check_list.append(1 if is_valid else 0)
+        else:
+            fs_check_list.append(0)
+
+    fs_df['FS_check'] = fs_check_list
+    fs_df['PatientID_prefix'] = extract_patient_id_prefix(fs_df['PatientID'])
+
+    # Group by patient - all EDFs must pass for patient to pass
+    fs_check = (
+        fs_df
+        .groupby('PatientID_prefix', group_keys=True)['FS_check']
+        .min()  # min() ensures ALL files pass
+        .reset_index()
+    )
+
+    return fs_check
+
+
+def process_duration_sheet(duration_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Process EDF duration validation sheet.
+
+    Args:
+        duration_df: DataFrame from 'EDF Duration' sheet
+
+    Returns:
+        DataFrame grouped by patient with duration validation results
+    """
+
+    duration_df['PatientID_prefix'] = duration_df['PatientID']
+
+    duration_df['Duration_check'] = (duration_df['duration_max_above_120'] * 1)
+
+    # Group by patient - all EDFs must pass for patient to pass
+    patient_duration_check = (
+        duration_df
+        .groupby('PatientID_prefix')['Duration_check']
+        .min()
+        .reset_index()
+    )
+
+    return patient_duration_check
+
+
+def process_channel_labels_sheet(channel_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Process channel labels validation sheet.
+
+    Args:
+        channel_df: DataFrame from 'Channel Labels' sheet
+
+    Returns:
+        DataFrame grouped by patient with channel validation results
+    """
+    # Find missing channels (marked with '***') for each row
+    missing_channels_per_row = []
+
+    for _, row in channel_df.iterrows():
+        missing_channels = channel_df.columns[row == MISSING_CHANNEL_MARKER].tolist()
+        missing_channels_per_row.append(missing_channels)
+
+    channel_df['missingChans'] = missing_channels_per_row
+    channel_df['PatientID_prefix'] = extract_patient_id_prefix(channel_df['identifier'])
+
+    # Group by patient
+    grouped_missing_channels = (
+        channel_df
+        .groupby('PatientID_prefix')['missingChans']
+        .apply(lambda x: x)
+    )
+
+    # Check if essential channels are missing
+    essential_channels_check = pd.DataFrame({
+        'PatientID_prefix': channel_df['PatientID_prefix'],
+        'essential_channels_ok': ~grouped_missing_channels.isin(ESSENTIAL_CHANNEL_NAMES)
+    })
+
+    # Check if montage is valid
+    montage_check = pd.DataFrame({
+        'PatientID_prefix': channel_df['PatientID_prefix'],
+        'montage_check': ~grouped_missing_channels.isin(MONTAGE_REQUIRED_CHANNELS)
+    })
+
+    # Merge and remove duplicates
+    channel_validation = pd.merge(
+        grouped_missing_channels,
+        essential_channels_check,
+        on='PatientID_prefix',
+        how='outer'
+    )
+
+    montage_check_unique = montage_check.drop_duplicates(subset=['PatientID_prefix'])
+
+    channel_validation = pd.merge(
+        channel_validation,
+        montage_check_unique,
+        on='PatientID_prefix',
+        how='outer'
+    )
+
+    channel_validation_unique = channel_validation.drop_duplicates(subset=['PatientID_prefix'])
+
+    return channel_validation_unique
+
+
+def generate_comprehensive_report(root_folder: str = 'D:/Users/vmostaghimi_choc/Desktop/site reports/10.CHOC',
+                                  input_excel_filename: str = '10.CHOC_overall_report_input.xlsx',
+                                  output_excel_filename: str = 'comprehensive_report.xlsx') -> None:
+    """
+    Generate comprehensive EEG quality validation report.
+
+    Reads multiple validation sheets from an input Excel file and merges them
+    into a single comprehensive report showing all quality checks per patient.
+
+    Args:
+        root_folder: Path to folder containing input Excel file
+        input_excel_filename: Name of input Excel file with validation sheets
+        output_excel_filename: Name of output Excel file for comprehensive report
+
+    Raises:
+        FileNotFoundError: If input Excel file doesn't exist
+        ValueError: If required sheets are missing or data format is invalid
+    """
+
+    # Validate input file exists
+    excel_file_path = os.path.join(root_folder, input_excel_filename)
+    if not os.path.exists(excel_file_path):
+        raise FileNotFoundError(f"Input Excel file not found: {excel_file_path}")
+
+    # Read all sheets from Excel file
+    try:
+        excel_data = pd.read_excel(excel_file_path, sheet_name=None)
+    except Exception as e:
+        raise ValueError(f"Error reading Excel file: {str(e)}")
+
+    # Process each sheet
+    sheet_results = {}
+
+    for sheet_name, sheet_df in excel_data.items():
+        print(f"  Processing sheet: {sheet_name}")
+
+        if sheet_name == 'EDF Duration':
+            sheet_results['duration'] = process_duration_sheet(sheet_df)
 
         elif sheet_name == 'FU-DX interval':
-            FU_DX_interval = excel_data[sheet_name]
-            FU_DX_interval = FU_DX_interval.rename(columns={"patientID": "PatientID_prefix"})
+            sheet_results['interval'] = sheet_df.rename(columns={"patientID": "PatientID_prefix"})
 
-
-        elif sheet_name == 'fs-macthing DX':
-            Fs_DX_sheet_info = excel_data[sheet_name]
-            fs_Dx_check_all = []
-            for k, edfnames in enumerate(Fs_DX_sheet_info['PatientID']):
-
-                percentage_of_error = (Fs_DX_sheet_info.loc[k, 'True fs'] - Fs_DX_sheet_info.loc[k, 'File fs']) / \
-                                      Fs_DX_sheet_info.loc[k, 'File fs'] * 100
-                if (percentage_of_error <= 1) & (Fs_DX_sheet_info.loc[k, 'File fs'] >= 200):
-                    fs_Dx_check = 1
-                    fs_Dx_check_all.append(fs_Dx_check)
-                else:
-                    fs_Dx_check = 0
-                    fs_Dx_check_all.append(fs_Dx_check)
-            Fs_DX_sheet_info['FS_DX_check'] = fs_Dx_check_all
-            Fs_DX_sheet_info['PatientID_prefix'] = Fs_DX_sheet_info['PatientID'].astype(str).str[:13]
-            Fs_DX_check = Fs_DX_sheet_info.groupby(by='PatientID_prefix', group_keys=True)['FS_DX_check'].agg(
-                'min').reset_index()
+        elif sheet_name == 'fs-matching DX':
+            sheet_results['fs_dx'] = validate_sampling_frequency_data(sheet_df)
 
         elif sheet_name == 'fs-matching FU':
-            Fs_FU_sheet_info = excel_data[sheet_name]
-            fs_FU_check_all = []
-            for k, edfnames in enumerate(Fs_FU_sheet_info['PatientID']):
-
-                percentage_of_error = (Fs_FU_sheet_info.loc[k, 'True fs'] - Fs_FU_sheet_info.loc[k, 'File fs']) / \
-                                      Fs_FU_sheet_info.loc[k, 'File fs'] * 100
-                if (percentage_of_error <= 1) & (Fs_FU_sheet_info.loc[k, 'File fs'] >= 200):
-                    fs_Fu_check = 1
-                    fs_FU_check_all.append(fs_Fu_check)
-                else:
-                    fs_Fu_check = 0
-                    fs_FU_check_all.append(fs_Fu_check)
-            Fs_FU_sheet_info['FS_FU_check'] = fs_FU_check_all
-            Fs_FU_sheet_info['PatientID_prefix'] = Fs_FU_sheet_info['PatientID'].astype(str).str[:13]
-            Fs_FU_check = Fs_FU_sheet_info.groupby(by='PatientID_prefix', group_keys=True)['FS_FU_check'].agg(
-                'min').reset_index()
-
+            sheet_results['fs_fu'] = validate_sampling_frequency_data(sheet_df)
 
         elif sheet_name == 'Channel Labels':
-            Chann_label_sheet_info = excel_data[sheet_name]
+            sheet_results['channels'] = process_channel_labels_sheet(sheet_df)
 
-            # sheet_info['missingChans'] = sheet_info.apply(lambda row: sheet_info.columns[row.isna()].tolist(), axis=1)
-            empty_columns_per_row = []
+    # Validate required sheets are present
+    required_sheets = ['duration', 'fs_dx', 'fs_fu', 'channels']
+    missing_sheets = [s for s in required_sheets if s not in sheet_results]
+    if missing_sheets:
+        raise ValueError(f"Missing required sheets: {missing_sheets}")
 
-            for _, row in Chann_label_sheet_info.iterrows():  # itterrows gives label of a dataframe or tuple of label, since I have it saved it as tuple, it gives tuple of labels
-                empty_columns = Chann_label_sheet_info.columns[
-                    row.isin(missing_channel_marker)].tolist()  # sheet_info.columns gives the name of each column in the first row, now row.isna, defines which columns in that row are empty
-                empty_columns_per_row.append(empty_columns)
-            Chann_label_sheet_info['missingChans'] = empty_columns_per_row
+    # Merge sampling frequency checks (DX and FU)
+    fs_merged = pd.merge(
+        sheet_results['fs_dx'],
+        sheet_results['fs_fu'],
+        on='PatientID_prefix',
+        how='outer',
+        suffixes=('_DX', '_FU')
+    )
 
-            essential_channs = []
+    # Combine DX and FU FS checks into single column
+    fs_merged['FS_check'] = fs_merged['FS_check_DX'].combine_first(fs_merged['FS_check_FU'])
+    fs_merged = fs_merged.drop(['FS_check_DX', 'FS_check_FU'], axis=1)
 
-            for rows in Chann_label_sheet_info['missingChans']:
-                if not(rows):
-                    essential_channs.append('TRUE')
-                else:
-                    ChansMissing = pd.DataFrame(rows)
-                    mytest = ~ChansMissing.isin(channel_name_list).any().any()
-                    essential_channs.append(mytest)
+    # Merge all validation results
+    print(f"\nMerging all validation results...")
+    comprehensive_report = (
+        sheet_results['duration']
+        .merge(sheet_results['channels'], on='PatientID_prefix')
+        .merge(fs_merged, on='PatientID_prefix')
+    )
 
-            Chann_label_sheet_info['Having_21_channels'] = ~Chann_label_sheet_info['missingChans'].isin(
-                channel_name_list)
+    # Rename for clarity
+    comprehensive_report = comprehensive_report.rename(columns={'PatientID_prefix': 'PatientID'})
 
-            Chann_label_sheet_info['PatientID_prefix'] = Chann_label_sheet_info['identifier'].astype('string').str[:13]
-            Missing_channels = Chann_label_sheet_info.groupby(by='PatientID_prefix', group_keys=True)[
-                'missingChans'].apply(lambda x: x)  # when you want to group based on just the name, make sure to make the GroupKeys true and do apply (lambda x:x)
+    # Write output
+    try:
+        write_dataframe_to_excel(
+            comprehensive_report,
+            root_folder,
+            output_excel_filename,
+            'comprehensive_report',
+            mode='w'  # Overwrite mode for fresh report
+        )
 
-            Essential_channs_exist = pd.merge(Chann_label_sheet_info['PatientID_prefix'],
-                                              ~Missing_channels.isin(channel_name_list), on='PatientID_prefix')
-
-
-
-
-            montage_check = pd.merge(Chann_label_sheet_info['PatientID_prefix'],
-                                     ~Missing_channels.isin(montage_check_chann_list),on='PatientID_prefix')
-            montage_check_unique = montage_check.drop_duplicates(subset = ['PatientID_prefix'])
-            montage_check_unique = montage_check_unique.rename(columns={"missingChans": "montage_check"})
-
-            Chann_check = pd.merge(Missing_channels, Essential_channs_exist, on='PatientID_prefix', how='outer')
-            Chann_check = pd.merge(Chann_check,montage_check_unique,on='PatientID_prefix', how='outer')
-            Chann_check_unique = Chann_check.drop_duplicates(subset=['PatientID_prefix'])
-
-
-
-    FS_check_new = pd.merge(Fs_FU_check, Fs_DX_check, on='PatientID_prefix', how='outer')
-
-    # Combine '_x' and '_y' columns into a new column 'Info'
-    FS_check_new['FS_check'] = FS_check_new['FS_FU_check'].combine_first(FS_check_new['FS_DX_check'])
-
-    # Drop the original '_x' and '_y' columns
-    FS_check_new.drop(['FS_FU_check', 'FS_DX_check'], axis=1, inplace=True)
+    except Exception as e:
+        raise IOError(f"Error writing output file: {str(e)}")
 
 
-    Merged_info_all = pd.merge(Patient_Duration_check, Chann_check_unique,on='PatientID_prefix').merge(FS_check_new,on='PatientID_prefix')
-    Merged_info_all = Merged_info_all.rename(columns ={'PatientID_prefix':'PatientID'})
-   # Merged_info_all['Having_21_channels'] = essential_channs
+def write_dataframe_to_excel(data_frame, folder_dir, excel_filename, sheet_name, mode='a'):
+    """
+    Write a DataFrame to an Excel file as a new sheet.
 
-    # Merged_info_FU = pd.merge(Patient_Duration_check, Chann_check_unique, on='PatientID_prefix').merge(Fs_FU_check,
-    #                                                                                             on='PatientID_prefix')
-    # testing = pd.merge(Merged_info_FU, FU_DX_interval, on='PatientID_prefix')
+    Args:
+        data_frame (pd.DataFrame): Data to write
+        output_dir (str): Directory where Excel file should be saved
+        excel_filename (str): Name of the Excel file
+        sheet_name (str): Name of the sheet to create
+        mode (str): Write mode - 'a' for append (default), 'w' for overwrite
+    """
 
-    # Merged_info_DX = pd.merge(Patient_Duration_check, Chann_check_unique, on='PatientID_prefix').merge(Fs_DX_check,
-    #                                                                                             on='PatientID_prefix')
-
-    # comprehensive_report["PatientID_DX"] = Merged_info_DX['PatientID_prefix']
-    # comprehensive_report["montage_DX"] = Merged_info_DX['montage_check']
-    # comprehensive_report["Duration_DX"] = Merged_info_DX['Duration_check']
-    # comprehensive_report["Having_21_channs_DX"] = Merged_info_DX['missingChans_y']
-    # comprehensive_report["missing_channs_DX"] = Merged_info_DX['missingChans_x']
-    # comprehensive_report["fs_DX_OK"] = Merged_info_DX['FS_DX_check']
-    #
-    # comprehensive_report["PatientID_FU"] = Merged_info_FU['PatientID_prefix']
-    # comprehensive_report["montage_FU"] = Merged_info_FU['montage_check']
-    # comprehensive_report["Duration_FU"] = Merged_info_FU['Duration_check']
-    # comprehensive_report["Having_21_channs_FU"] = Merged_info_FU['missingChans_y']
-    # comprehensive_report["missing_channs_FU"] = Merged_info_FU['missingChans_x']
-    # comprehensive_report["fs_FU_OK"] = Merged_info_FU['FS_FU_check']
-
-    # write_as_excel(comprehensive_report, root_folder, 'comprehensive_report.xlsx', 'comprehensive_report', mode='a')
-    write_as_excel(Merged_info_all, root_folder, 'comprehensive_report.xlsx', 'comprehensive_report', mode='a')
+    if data_frame.empty:
+        print(f"Warning: Empty DataFrame, skipping write for sheet '{sheet_name}'")
+        return
+    try:
+        excel_path = os.path.join(folder_dir, excel_filename)
+        with pd.ExcelWriter(excel_path, mode=mode, engine='openpyxl') as writer:
+            data_frame.to_excel(writer, sheet_name=sheet_name, index=False, na_rep='')
+    except Exception as e:
+        print(f"Error writing to Excel file {excel_filename}, sheet {sheet_name}: {str(e)}")
 
 
-#
-
-def write_as_excel(data_frame, folder_dir, excel_file_name, sheet_name, mode='a'):
-    with pd.ExcelWriter(f"{folder_dir}/{excel_file_name}", mode=mode, engine='openpyxl') as writer:
-        data_frame.to_excel(writer, sheet_name=sheet_name, index=False)
+if __name__ == '__main__':
 
 
-Process_all_data()
+    ROOT_FOLDER = 'Z:/uci_vmostaghimi/23.uconn_jmadan_new'
+    INPUT_EXCEL = '23.uconn_jmadan_new_overall_report_input.xlsx'
+    OUTPUT_EXCEL = 'comprehensive_report.xlsx'
+
+    # ========================================
+    # GENERATE REPORT
+    # ========================================
+
+    generate_comprehensive_report(
+        root_folder=ROOT_FOLDER,
+        input_excel_filename=INPUT_EXCEL,
+        output_excel_filename=OUTPUT_EXCEL
+    )
