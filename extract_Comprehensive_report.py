@@ -21,8 +21,8 @@ Output:
     comprehensive_report.xlsx: Single sheet with merged validation results
 
 Note:
-   to Run this code first make an excel file and put it in the root folder directory
-    and put the name in output_excel_filename
+    This code cannot be used for multiple centers at the same time. It processes
+    one center at a time.
 """
 
 
@@ -315,11 +315,6 @@ if __name__ == '__main__':
     ROOT_FOLDER = 'Z:/uci_vmostaghimi/23.uconn_jmadan_new'
     INPUT_EXCEL = '23.uconn_jmadan_new_overall_report_input.xlsx'
     OUTPUT_EXCEL = 'comprehensive_report.xlsx'
-
-    # ========================================
-    # GENERATE REPORT
-    # ========================================
-
     generate_comprehensive_report(
         root_folder=ROOT_FOLDER,
         input_excel_filename=INPUT_EXCEL,
